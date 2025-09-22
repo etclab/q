@@ -34,7 +34,7 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 		req.Zero = opts.Zero
 		req.Truncated = opts.Truncated
 
-		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" {
+		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWTToken != "" {
 			opt := &dns.OPT{
 				Hdr: dns.RR_Header{
 					Name:   ".",
@@ -99,6 +99,15 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 					Cookie: opts.Cookie,
 				}
 				opt.Option = append(opt.Option, cookie)
+			}
+
+			if opts.JWTToken != "" {
+				log.Debugf("Adding JWT token to EDNS0 OPT record (code 65001)")
+				jwtOpt := &dns.EDNS0_LOCAL{
+					Code: 65001, // Private EDNS option code
+					Data: []byte(opts.JWTToken),
+				}
+				opt.Option = append(opt.Option, jwtOpt)
 			}
 
 			req.Extra = append(req.Extra, opt)

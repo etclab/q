@@ -20,6 +20,7 @@ type Flags struct {
 	NSID             bool          `short:"n" long:"nsid" description:"Set EDNS0 NSID opt"`
 	NSIDOnly         bool          `short:"N" long:"nsid-only" description:"Set EDNS0 NSID opt and query only for the NSID"`
 	ClientSubnet     string        `long:"subnet" description:"Set EDNS0 client subnet"`
+	JWTToken         string        `long:"jwt" description:"Set JWT token in EDNS0 OPT record (option code 65001)"`
 	Chaos            bool          `short:"c" long:"chaos" description:"Use CHAOS query class"`
 	Class            uint16        `short:"C" description:"Set query class (default: IN 0x01)" default:"1"`
 	ODoHProxy        string        `short:"p" long:"odoh-proxy" description:"ODoH proxy"`
