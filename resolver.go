@@ -34,7 +34,10 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 		req.Zero = opts.Zero
 		req.Truncated = opts.Truncated
 
-		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWTToken != "" {
+		// Check if we need EDNS0 for Calypso (when querying TXT and Calypso key is configured)
+		needCalypsoEDNS := qType == dns.TypeTXT && cryptoConfig != nil && cryptoConfig.HasAnyKey()
+
+		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWTToken != "" || needCalypsoEDNS {
 			opt := &dns.OPT{
 				Hdr: dns.RR_Header{
 					Name:   ".",
@@ -108,6 +111,16 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 					Data: []byte(opts.JWTToken),
 				}
 				opt.Option = append(opt.Option, jwtOpt)
+			}
+
+			// Add Calypso search tag option when querying TXT with crypto keys
+			if needCalypsoEDNS {
+				log.Debugf("Adding Calypso search tag EDNS0 option (code 65002)")
+				calypsoOpt := &dns.EDNS0_LOCAL{
+					Code: 65002, // Calypso search tag signal
+					Data: []byte{0x01}, // Version 1
+				}
+				opt.Option = append(opt.Option, calypsoOpt)
 			}
 
 			req.Extra = append(req.Extra, opt)

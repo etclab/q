@@ -28,6 +28,7 @@ import (
 const defaultServerVar = "Q_DEFAULT_SERVER"
 
 var opts = cli.Flags{}
+var cryptoConfig *CryptoConfig
 
 // Build process flags
 var (
@@ -71,6 +72,82 @@ func txtConcat(m *dns.Msg) {
 		}
 	}
 	m.Answer = answers
+}
+
+// processEncryptedTXT processes encrypted TXT records and replaces them with decrypted A records
+func processEncryptedTXT(m *dns.Msg) error {
+	if cryptoConfig == nil || !cryptoConfig.HasAnyKey() {
+		return nil // No crypto keys configured
+	}
+
+	var newAnswers []dns.RR
+
+	for _, answer := range m.Answer {
+		if answer.Header().Rrtype == dns.TypeTXT {
+			txt := answer.(*dns.TXT)
+			if len(txt.Txt) == 0 {
+				newAnswers = append(newAnswers, answer)
+				continue
+			}
+
+			// Concatenate TXT parts
+			txtData := strings.Join(txt.Txt, "")
+
+			// Try to parse as encrypted TXT
+			parsed, err := ParseTXTRecord(txtData)
+			if err != nil {
+				log.Debugf("TXT record not in encrypted format, keeping as-is: %v", err)
+				newAnswers = append(newAnswers, answer)
+				continue
+			}
+
+			// Decrypt the record
+			ip, err := cryptoConfig.DecryptResponse(parsed)
+			if err != nil {
+				return fmt.Errorf("decryption failed: %w", err)
+			}
+
+			log.Debugf("Decrypted IP: %s", ip)
+
+			// Create an A or AAAA record from the decrypted IP
+			ipAddr := net.ParseIP(ip)
+			if ipAddr == nil {
+				return fmt.Errorf("invalid IP address in decrypted response: %s", ip)
+			}
+
+			var newRecord dns.RR
+			if ipAddr.To4() != nil {
+				// IPv4
+				newRecord = &dns.A{
+					Hdr: dns.RR_Header{
+						Name:   answer.Header().Name,
+						Rrtype: dns.TypeA,
+						Class:  answer.Header().Class,
+						Ttl:    answer.Header().Ttl,
+					},
+					A: ipAddr,
+				}
+			} else {
+				// IPv6
+				newRecord = &dns.AAAA{
+					Hdr: dns.RR_Header{
+						Name:   answer.Header().Name,
+						Rrtype: dns.TypeAAAA,
+						Class:  answer.Header().Class,
+						Ttl:    answer.Header().Ttl,
+					},
+					AAAA: ipAddr,
+				}
+			}
+
+			newAnswers = append(newAnswers, newRecord)
+		} else {
+			newAnswers = append(newAnswers, answer)
+		}
+	}
+
+	m.Answer = newAnswers
+	return nil
 }
 
 // dnsStampToURL converts a DNS stamp string to a URL string
@@ -233,6 +310,12 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 	if opts.ShowVersion {
 		util.MustWritef(out, "https://github.com/natesales/q version %s (%s %s)\n", version, commit, date)
 		return nil
+	}
+
+	// Load crypto configuration
+	cryptoConfig, err = LoadCryptoConfig()
+	if err != nil {
+		return fmt.Errorf("loading crypto config: %w", err)
 	}
 
 	if opts.ShowAll {
@@ -478,6 +561,13 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 			if opts.TXTConcat {
 				for _, reply := range replies {
 					txtConcat(reply)
+				}
+			}
+
+			// Process encrypted TXT records
+			for _, reply := range replies {
+				if err := processEncryptedTXT(reply); err != nil {
+					errChan <- fmt.Errorf("processing encrypted TXT: %w", err)
 				}
 			}
 
