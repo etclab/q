@@ -35,7 +35,7 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 		req.Truncated = opts.Truncated
 
 		// Check if we need EDNS0 for Calypso (when querying TXT and Calypso key is configured)
-		needCalypsoEDNS := qType == dns.TypeTXT && cryptoConfig != nil && cryptoConfig.HasAnyKey()
+		needCalypsoEDNS := qType == dns.TypeTXT && cryptoConfig.CalypsoPrivateKey != nil
 
 		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWTToken != "" || needCalypsoEDNS {
 			opt := &dns.OPT{
