@@ -129,13 +129,15 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 
 			// Add Calypso EDNS option with searchtag
 			if needCalypsoEDNS {
-				if opts.SearchTag == "" {
-					log.Fatalf("--searchtag is required for Calypso queries")
+				// Auto-generate searchtag from domain name
+				searchtag, err := cryptoConfig.GenerateSearchtag(opts.Name)
+				if err != nil {
+					log.Fatalf("Failed to generate searchtag for %s: %v", opts.Name, err)
 				}
-				log.Debugf("Adding Calypso EDNS0 option (code 65003) with searchtag: %s", opts.SearchTag)
+				log.Debugf("Adding Calypso EDNS0 option (code 65003) with searchtag: %s", searchtag)
 				calypsoOpt := &dns.EDNS0_LOCAL{
 					Code: 65003, // Calypso option code
-					Data: []byte(opts.SearchTag), // Searchtag as payload
+					Data: []byte(searchtag), // Searchtag as payload
 				}
 				opt.Option = append(opt.Option, calypsoOpt)
 			}

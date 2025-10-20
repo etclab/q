@@ -83,19 +83,24 @@ Calypso provides searchable encryption with writer/reader key separation.
 # Generate Calypso parameters and writer key
 make setup-calypso
 
-# Query A record with automatic decryption (requires searchtag)
+# Query A record with automatic decryption
 ./q A verify.example.com --calypso \
-  --searchtag=test \
   --params=verify_calypso_params.bin \
   --key=verify_calypso_writer.key \
   @localhost:1053
 
-# The tool automatically queries TXT and decrypts to A record
+# The tool automatically:
+# 1. Derives the searchtag from the domain name and key
+# 2. Queries TXT with searchtag in EDNS0 option
+# 3. Decrypts and returns the A record
 ```
 
 **Technical Details:**
 - Uses EDNS0 option code 65003
-- Searchtag sent as EDNS0 payload
+- Searchtag automatically derived from the **query domain name** using the **loaded key's cryptographic parameters**
+  - If querying the exact domain the key is for → uses key's pre-computed searchtag
+  - If querying a subdomain matching the key's pattern → derives new searchtag for that specific domain
+- Searchtag sent as EDNS0 payload (auto-generated, not user-provided)
 - Encrypted payload format: binary (IV + AES ciphertext + Calypso ciphertext)
 - TXT record format: `03:<base64-encoded-payload>`
 

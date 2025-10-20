@@ -458,3 +458,40 @@ func (c *CryptoConfig) decryptCalypso(ciphertext []byte) (string, error) {
 
 	return record.Host, nil
 }
+
+// GenerateSearchtag generates a searchtag for a given domain name using Calypso
+// The searchtag is computed from the domain's cryptographic slots
+func (c *CryptoConfig) GenerateSearchtag(domainName string) (string, error) {
+	if c.CalypsoPrivateKey == nil {
+		return "", fmt.Errorf("Calypso key not loaded")
+	}
+
+	// Check if domain name contains wildcards
+	if strings.Contains(domainName, "*") {
+		return "", fmt.Errorf("cannot generate searchtag for wildcard domains")
+	}
+
+	// Remove trailing dot if present for comparison
+	queryDomain := strings.TrimSuffix(domainName, ".")
+	keyDomain := strings.TrimSuffix(c.CalypsoPrivateKey.DomainName, ".")
+
+	// If the key is for the exact domain, return its searchtag
+	if keyDomain == queryDomain {
+		return c.CalypsoPrivateKey.SearchTag, nil
+	}
+
+	// Otherwise, derive a key for the specific domain to get its searchtag
+	// This handles cases where the loaded key is for a parent domain (e.g., *.example.com)
+	// and we're querying a specific subdomain (e.g., alice.example.com)
+	log.Debugf("Deriving searchtag for %s from parent key %s", queryDomain, keyDomain)
+	derivedKey, err := c.CalypsoPrivateKey.DeriveKey(queryDomain, false)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive key for domain %s: %w (your key is for '%s', cannot derive '%s')", queryDomain, err, keyDomain, queryDomain)
+	}
+
+	if derivedKey.SearchTag == "" {
+		return "", fmt.Errorf("derived key for domain %s has no searchtag (may contain wildcards)", queryDomain)
+	}
+
+	return derivedKey.SearchTag, nil
+}
