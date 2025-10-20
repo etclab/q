@@ -313,7 +313,7 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 	}
 
 	// Load crypto configuration
-	cryptoConfig, err = LoadCryptoConfig()
+	cryptoConfig, err = LoadCryptoConfig(opts.WKDIBE, opts.Calypso, opts.KeyFile, opts.ParamsFile)
 	if err != nil {
 		return fmt.Errorf("loading crypto config: %w", err)
 	}
@@ -401,6 +401,13 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 			return fmt.Errorf("dns reverse: %s", err)
 		}
 		rrTypes[dns.StringToType["PTR"]] = true
+	}
+
+	// For encrypted transports, always query TXT regardless of user-specified type
+	if opts.WKDIBE || opts.Calypso {
+		log.Debugf("Encrypted transport detected, forcing query type to TXT")
+		rrTypes = make(map[uint16]bool)
+		rrTypes[dns.TypeTXT] = true
 	}
 
 	// Log RR types

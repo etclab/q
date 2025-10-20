@@ -7,31 +7,26 @@ Send JWT tokens in DNS queries via EDNS OPT records (option code 65001).
 ### Basic Usage
 
 ```bash
-./q A --jwt="<JWT_TOKEN>" example.com @server
+./q A --jwt --token "<JWT_TOKEN>" example.com @server
 
 # Over UDP
-./q A --jwt="<token>" --verbose --opt example.com @127.0.0.1:1053
+./q A --jwt --token "<token>" example.com @127.0.0.1:1053
 
 # Over DoT (DNS-over-TLS)
-./q A --jwt="<token>" --verbose --opt example.com @localhost:853
+./q A --jwt --token "<token>" example.com @tls://localhost:853
 
 # Over DoH (DNS-over-HTTPS)
-./q A --jwt="<token>" --verbose --opt example.com @https://127.0.0.1:443/dns-query
+./q A --jwt --token "<token>" example.com @https://127.0.0.1:443/dns-query
+
+# With verbose output (shows EDNS0 option details)
+./q A --jwt --token "<token>" --verbose example.com @server
 ```
-
-### Debug Mode
-
-```bash
-./q A --jwt="<TOKEN>" --verbose example.com @server
-```
-
-Shows: `"Adding JWT token to EDNS0 OPT record (code 65001)"`
 
 ### Expected Behavior
 
 - **Valid JWT**: Query succeeds (NOERROR)
-- **Invalid/Missing JWT**: Server returns REFUSED status
-- **Empty --jwt=""**: No EDNS option added
+- **Invalid JWT**: Server returns REFUSED status
+- **Missing --token flag**: Error - "--token is required for JWT queries"
 
 ### JWT Requirements (CoreDNS jwt_edns plugin)
 
@@ -49,58 +44,66 @@ Shows: `"Adding JWT token to EDNS0 OPT record (code 65001)"`
 
 - Uses EDNS0 option code 65001 (private range)
 - Compatible with CoreDNS `jwt_edns` plugin
-- JWT stored as raw bytes in DNS query
-- CoreDNS has to have access to the public key whose private key generated the JWT token
+- JWT stored as raw bytes in EDNS0 OPT record
+- CoreDNS must have the public key that corresponds to the private key used to sign the JWT
 
 ## Encrypted DNS Records
 
-The tool supports decrypting DNS records encrypted with RSA, WKD-IBE, or Calypso. Queries without keys show encrypted TXT records; with keys, decrypted content is returned.
-
-### RSA Decryption
-
-Setup and query:
-```bash
-# Generate RSA keys
-make setup-rsa
-
-# Query with RSA private key
-RSA_KEY_FILE=verify_rsa_private.pem ./q TXT verify.example.com @localhost:1053
-```
+The tool supports decrypting DNS records encrypted with WKD-IBE or Calypso. The encrypted records are stored as TXT records on the server, but when querying with decryption keys, you can request any record type (A, AAAA, etc.) and `q` will automatically fetch and decrypt the TXT record.
 
 ### WKD-IBE Decryption
 
-Requires `etcd-client` tool for key generation.
+WKD-IBE (Wildcard Key-Derived Identity-Based Encryption) allows identity-based decryption using hierarchical domain patterns.
 
-Setup and query:
+**Setup and query:**
 ```bash
-# Generate WKD-IBE parameters and identity key (requires etcd-client)
+# Generate WKD-IBE parameters and identity key
 make setup-wkdibe
 
-# Query with WKD-IBE key
-WKDIBE_PARAMS_FILE=verify_wkdibe_params.bin WKDIBE_KEY_FILE=verify_wkdibe_identity.key \
-  ./q TXT verify.example.com @localhost:1053
+# Query A record with automatic decryption
+./q A verify.example.com --wkdibe \
+  --params=verify_wkdibe_params.bin \
+  --key=verify_wkdibe_identity.key \
+  @localhost:1053
+
+# The tool automatically queries TXT and decrypts to A record
 ```
+
+**Technical Details:**
+- Uses EDNS0 option code 65002
+- Encrypted payload format: binary (IV + AES ciphertext + IBE ciphertext)
+- TXT record format: `02:<base64-encoded-payload>`
 
 ### Calypso Decryption
 
-Requires `etcd-client` tool for key generation.
+Calypso provides searchable encryption with writer/reader key separation.
 
-Setup and query:
+**Setup and query:**
 ```bash
-# Generate Calypso parameters and writer key (requires etcd-client)
+# Generate Calypso parameters and writer key
 make setup-calypso
 
-# Query with Calypso key
-CALYPSO_PARAMS_FILE=verify_calypso_params.bin CALYPSO_KEY_FILE=verify_calypso_writer.key \
-  ./q TXT verify.example.com @localhost:1053
+# Query A record with automatic decryption (requires searchtag)
+./q A verify.example.com --calypso \
+  --searchtag=test \
+  --params=verify_calypso_params.bin \
+  --key=verify_calypso_writer.key \
+  @localhost:1053
+
+# The tool automatically queries TXT and decrypts to A record
 ```
+
+**Technical Details:**
+- Uses EDNS0 option code 65003
+- Searchtag sent as EDNS0 payload
+- Encrypted payload format: binary (IV + AES ciphertext + Calypso ciphertext)
+- TXT record format: `03:<base64-encoded-payload>`
 
 ### Verification
 
-Run all encryption tests (requires CoreDNS on localhost:1053 with encrypted records):
+Run encryption tests (requires CoreDNS on localhost:1053 with encrypted records):
 ```bash
-make verify-all      # Test all three encryption schemes
-make verify-rsa      # Test RSA only
+make verify-all      # Test all encryption schemes
 make verify-wkdibe   # Test WKD-IBE only
 make verify-calypso  # Test Calypso only
 ```

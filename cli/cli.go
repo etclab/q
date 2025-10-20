@@ -20,7 +20,13 @@ type Flags struct {
 	NSID             bool          `short:"n" long:"nsid" description:"Set EDNS0 NSID opt"`
 	NSIDOnly         bool          `short:"N" long:"nsid-only" description:"Set EDNS0 NSID opt and query only for the NSID"`
 	ClientSubnet     string        `long:"subnet" description:"Set EDNS0 client subnet"`
-	JWTToken         string        `long:"jwt" description:"Set JWT token in EDNS0 OPT record (option code 65001)"`
+	JWT              bool          `long:"jwt" description:"Use JWT authentication (EDNS option 65001)"`
+	Token            string        `long:"token" description:"JWT token value"`
+	WKDIBE           bool          `long:"wkdibe" description:"Use WKDIBE encryption (EDNS option 65002)"`
+	Calypso          bool          `long:"calypso" description:"Use Calypso encryption (EDNS option 65003)"`
+	SearchTag        string        `long:"searchtag" description:"Searchtag for Calypso queries"`
+	KeyFile          string        `long:"key" description:"Path to private key file"`
+	ParamsFile       string        `long:"params" description:"Path to public parameters file"`
 	Chaos            bool          `short:"c" long:"chaos" description:"Use CHAOS query class"`
 	Class            uint16        `short:"C" description:"Set query class (default: IN 0x01)" default:"1"`
 	ODoHProxy        string        `short:"p" long:"odoh-proxy" description:"ODoH proxy"`

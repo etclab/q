@@ -34,10 +34,11 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 		req.Zero = opts.Zero
 		req.Truncated = opts.Truncated
 
-		// Check if we need EDNS0 for Calypso (when querying TXT and Calypso key is configured)
-		needCalypsoEDNS := qType == dns.TypeTXT && cryptoConfig.CalypsoPrivateKey != nil
+		// Check if we need EDNS0 for encryption approaches
+		needWKDIBEEDNS := opts.WKDIBE && cryptoConfig.WKDIBEPrivateKey != nil
+		needCalypsoEDNS := opts.Calypso && cryptoConfig.CalypsoPrivateKey != nil
 
-		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWTToken != "" || needCalypsoEDNS {
+		if opts.DNSSEC || opts.NSID || opts.Pad || opts.ClientSubnet != "" || opts.Cookie != "" || opts.JWT || needWKDIBEEDNS || needCalypsoEDNS {
 			opt := &dns.OPT{
 				Hdr: dns.RR_Header{
 					Name:   ".",
@@ -104,21 +105,37 @@ func createQuery(opts cli.Flags, rrTypes []uint16) []dns.Msg {
 				opt.Option = append(opt.Option, cookie)
 			}
 
-			if opts.JWTToken != "" {
+			if opts.JWT {
+				if opts.Token == "" {
+					log.Fatalf("--token is required for JWT queries")
+				}
 				log.Debugf("Adding JWT token to EDNS0 OPT record (code 65001)")
 				jwtOpt := &dns.EDNS0_LOCAL{
 					Code: 65001, // Private EDNS option code
-					Data: []byte(opts.JWTToken),
+					Data: []byte(opts.Token),
 				}
 				opt.Option = append(opt.Option, jwtOpt)
 			}
 
-			// Add Calypso search tag option when querying TXT with crypto keys
+			// Add WKDIBE EDNS option (empty payload)
+			if needWKDIBEEDNS {
+				log.Debugf("Adding WKDIBE EDNS0 option (code 65002)")
+				wkdibeOpt := &dns.EDNS0_LOCAL{
+					Code: 65002, // WKDIBE option code
+					Data: []byte{}, // Empty payload
+				}
+				opt.Option = append(opt.Option, wkdibeOpt)
+			}
+
+			// Add Calypso EDNS option with searchtag
 			if needCalypsoEDNS {
-				log.Debugf("Adding Calypso search tag EDNS0 option (code 65002)")
+				if opts.SearchTag == "" {
+					log.Fatalf("--searchtag is required for Calypso queries")
+				}
+				log.Debugf("Adding Calypso EDNS0 option (code 65003) with searchtag: %s", opts.SearchTag)
 				calypsoOpt := &dns.EDNS0_LOCAL{
-					Code: 65002, // Calypso search tag signal
-					Data: []byte{0x01}, // Version 1
+					Code: 65003, // Calypso option code
+					Data: []byte(opts.SearchTag), // Searchtag as payload
 				}
 				opt.Option = append(opt.Option, calypsoOpt)
 			}

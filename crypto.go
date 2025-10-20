@@ -2,15 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"strconv"
@@ -26,32 +21,34 @@ import (
 
 // CryptoConfig holds encryption keys and parameters
 type CryptoConfig struct {
-	RSAPrivateKey      *rsa.PrivateKey
-	WKDIBEPublicParams *akn07.PublicParams
-	WKDIBEPrivateKey   *akn07.PrivateKey
+	WKDIBEPublicParams  *akn07.PublicParams
+	WKDIBEPrivateKey    *akn07.PrivateKey
 	CalypsoPublicParams *akn07.PublicParams
-	CalypsoPrivateKey  *calypso.PrivateKey
+	CalypsoPrivateKey   *calypso.PrivateKey
 }
 
-// LoadCryptoConfig loads encryption keys from environment variables
-func LoadCryptoConfig() (*CryptoConfig, error) {
+// LoadCryptoConfig loads encryption keys based on explicit flags
+// Requires --wkdibe or --calypso flags to load IBE keys
+// File paths can be specified via flags or environment variables
+func LoadCryptoConfig(wkdibe, calypso bool, keyFile, paramsFile string) (*CryptoConfig, error) {
 	cfg := &CryptoConfig{}
 
-	// Load RSA private key if configured
-	if rsaKeyPath := os.Getenv("RSA_KEY_FILE"); rsaKeyPath != "" {
-		log.Debugf("Loading RSA key from %s", rsaKeyPath)
-		key, err := loadRSAPrivateKey(rsaKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("loading RSA key: %w", err)
+	// Load WKD-IBE keys if --wkdibe flag is set
+	if wkdibe {
+		// Get paths from flags or environment variables
+		wkdibeParamsPath := paramsFile
+		if wkdibeParamsPath == "" {
+			wkdibeParamsPath = os.Getenv("WKDIBE_PARAMS_FILE")
 		}
-		cfg.RSAPrivateKey = key
-		log.Debug("RSA key loaded successfully")
-	}
+		wkdibeKeyPath := keyFile
+		if wkdibeKeyPath == "" {
+			wkdibeKeyPath = os.Getenv("WKDIBE_KEY_FILE")
+		}
 
-	// Load WKD-IBE keys if configured
-	wkdibeParamsPath := os.Getenv("WKDIBE_PARAMS_FILE")
-	wkdibeKeyPath := os.Getenv("WKDIBE_KEY_FILE")
-	if wkdibeParamsPath != "" && wkdibeKeyPath != "" {
+		if wkdibeParamsPath == "" || wkdibeKeyPath == "" {
+			return nil, fmt.Errorf("WKDIBE requires both --params and --key (or WKDIBE_PARAMS_FILE and WKDIBE_KEY_FILE)")
+		}
+
 		log.Debugf("Loading WKD-IBE params from %s and key from %s", wkdibeParamsPath, wkdibeKeyPath)
 		params, key, err := loadWKDIBEKeys(wkdibeParamsPath, wkdibeKeyPath)
 		if err != nil {
@@ -62,10 +59,22 @@ func LoadCryptoConfig() (*CryptoConfig, error) {
 		log.Debug("WKD-IBE keys loaded successfully")
 	}
 
-	// Load Calypso keys if configured
-	calypsoParamsPath := os.Getenv("CALYPSO_PARAMS_FILE")
-	calypsoKeyPath := os.Getenv("CALYPSO_KEY_FILE")
-	if calypsoParamsPath != "" && calypsoKeyPath != "" {
+	// Load Calypso keys if --calypso flag is set
+	if calypso {
+		// Get paths from flags or environment variables
+		calypsoParamsPath := paramsFile
+		if calypsoParamsPath == "" {
+			calypsoParamsPath = os.Getenv("CALYPSO_PARAMS_FILE")
+		}
+		calypsoKeyPath := keyFile
+		if calypsoKeyPath == "" {
+			calypsoKeyPath = os.Getenv("CALYPSO_KEY_FILE")
+		}
+
+		if calypsoParamsPath == "" || calypsoKeyPath == "" {
+			return nil, fmt.Errorf("Calypso requires both --params and --key (or CALYPSO_PARAMS_FILE and CALYPSO_KEY_FILE)")
+		}
+
 		log.Debugf("Loading Calypso params from %s and key from %s", calypsoParamsPath, calypsoKeyPath)
 		params, key, err := loadCalypsoKeys(calypsoParamsPath, calypsoKeyPath)
 		if err != nil {
@@ -77,30 +86,6 @@ func LoadCryptoConfig() (*CryptoConfig, error) {
 	}
 
 	return cfg, nil
-}
-
-// loadRSAPrivateKey loads an RSA private key from a PEM file
-func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading key file: %w", err)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
-	}
-
-	// Try PKCS8 format first
-	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
-		if rsaKey, ok := key.(*rsa.PrivateKey); ok {
-			return rsaKey, nil
-		}
-		return nil, fmt.Errorf("not an RSA private key")
-	}
-
-	// Fall back to PKCS1 format
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
 // loadWKDIBEKeys loads WKD-IBE public parameters and private key
@@ -132,14 +117,13 @@ func loadWKDIBEKeys(paramsPath, keyPath string) (*akn07.PublicParams, *akn07.Pri
 
 // HasAnyKey returns true if any encryption key is configured
 func (c *CryptoConfig) HasAnyKey() bool {
-	return c.RSAPrivateKey != nil || c.WKDIBEPrivateKey != nil || c.CalypsoPrivateKey != nil
+	return c.WKDIBEPrivateKey != nil || c.CalypsoPrivateKey != nil
 }
 
 // CryptoType represents the encryption type
 type CryptoType byte
 
 const (
-	CryptoTypeRSA     CryptoType = 0x01
 	CryptoTypeWKDIBE  CryptoType = 0x02
 	CryptoTypeCalypso CryptoType = 0x03
 )
@@ -151,7 +135,7 @@ type ParsedTXTRecord struct {
 }
 
 // ParseTXTRecord parses a TXT record in TYPE:BASE64 format
-// Format: "01:YmFzZTY0ZW5jcnlwdGVk" where 01 is hex crypto type
+// Format: "02:YmFzZTY0ZW5jcnlwdGVk" where 02 is hex crypto type
 func ParseTXTRecord(txtData string) (*ParsedTXTRecord, error) {
 	// Split on colon
 	parts := strings.SplitN(txtData, ":", 2)
@@ -159,14 +143,14 @@ func ParseTXTRecord(txtData string) (*ParsedTXTRecord, error) {
 		return nil, fmt.Errorf("invalid TXT format: expected TYPE:BASE64")
 	}
 
-	// Parse type (hex string like "01", "02", "03")
+	// Parse type (hex string like "02", "03")
 	typeNum, err := strconv.ParseUint(parts[0], 16, 8)
 	if err != nil {
 		return nil, fmt.Errorf("invalid crypto type: %w", err)
 	}
 
 	cryptoType := CryptoType(typeNum)
-	if cryptoType != CryptoTypeRSA && cryptoType != CryptoTypeWKDIBE && cryptoType != CryptoTypeCalypso {
+	if cryptoType != CryptoTypeWKDIBE && cryptoType != CryptoTypeCalypso {
 		return nil, fmt.Errorf("unknown crypto type: 0x%02x", cryptoType)
 	}
 
@@ -187,8 +171,6 @@ func ParseTXTRecord(txtData string) (*ParsedTXTRecord, error) {
 // DecryptResponse decrypts the encrypted payload and returns the IP address
 func (c *CryptoConfig) DecryptResponse(parsed *ParsedTXTRecord) (string, error) {
 	switch parsed.Type {
-	case CryptoTypeRSA:
-		return c.decryptRSA(parsed.Payload)
 	case CryptoTypeWKDIBE:
 		return c.decryptWKDIBE(parsed.Payload)
 	case CryptoTypeCalypso:
@@ -196,39 +178,6 @@ func (c *CryptoConfig) DecryptResponse(parsed *ParsedTXTRecord) (string, error) 
 	default:
 		return "", fmt.Errorf("unknown crypto type: 0x%02x", parsed.Type)
 	}
-}
-
-// decryptRSA decrypts RSA-encrypted data and extracts the IP address
-func (c *CryptoConfig) decryptRSA(ciphertext []byte) (string, error) {
-	if c.RSAPrivateKey == nil {
-		return "", fmt.Errorf("RSA key not configured (set RSA_KEY_FILE)")
-	}
-
-	log.Debugf("Decrypting RSA ciphertext (len=%d)", len(ciphertext))
-
-	// Decrypt using OAEP with SHA-256 (modern secure padding)
-	hash := sha256.New()
-	plaintext, err := rsa.DecryptOAEP(hash, rand.Reader, c.RSAPrivateKey, ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("RSA decryption failed: %w", err)
-	}
-
-	log.Debugf("Decrypted plaintext: %s", string(plaintext))
-
-	// Parse standard JSON format: {"host": "...", "ttl": ...}
-	var record struct {
-		Host string `json:"host"`
-		TTL  int    `json:"ttl"`
-	}
-	if err := json.Unmarshal(plaintext, &record); err != nil {
-		return "", fmt.Errorf("failed to parse JSON record: %w", err)
-	}
-
-	if record.Host == "" {
-		return "", fmt.Errorf("JSON record missing 'host' field, got: %s", string(plaintext))
-	}
-
-	return record.Host, nil
 }
 
 // decryptWKDIBE decrypts WKD-IBE-encrypted data and extracts the IP address
