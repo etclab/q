@@ -506,7 +506,11 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 	for rrType := range rrTypes {
 		rrTypesSlice = append(rrTypesSlice, rrType)
 	}
+
+	// Measure query preparation crypto overhead (Calypso searchtag generation, etc.)
+	queryPrepStart := time.Now()
 	msgs := createQuery(opts, rrTypesSlice)
+	queryPrepTime := time.Since(queryPrepStart)
 
 	errChan := make(chan error)
 
@@ -535,7 +539,8 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 				errChan <- fmt.Errorf("creating transport: %s", err)
 			}
 
-			startTime := time.Now()
+			// Measure pure DNS latency
+			dnsStart := time.Now()
 			var replies []*dns.Msg
 			for _, msg := range msgs {
 				if txp == nil {
@@ -564,21 +569,26 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 				replies = append(replies, reply)
 			}
 
-			// Process TXT parsing
+			dnsTime := time.Since(dnsStart)
+
+			// Process TXT parsing (non-crypto processing)
 			if opts.TXTConcat {
 				for _, reply := range replies {
 					txtConcat(reply)
 				}
 			}
 
-			// Process encrypted TXT records
+			// Measure response decryption overhead
+			decryptStart := time.Now()
 			for _, reply := range replies {
 				if err := processEncryptedTXT(reply); err != nil {
 					errChan <- fmt.Errorf("processing encrypted TXT: %w", err)
 				}
 			}
 
-			// Round TTL
+			decryptTime := time.Since(decryptStart)
+
+			// Round TTL (non-crypto processing)
 			if opts.RoundTTLs {
 				for _, reply := range replies {
 					for _, rr := range reply.Answer {
@@ -588,10 +598,13 @@ All long form (--) flags can be toggled with the dig-standard +[no]flag notation
 			}
 
 			e := &output.Entry{
-				Queries: msgs,
-				Replies: replies,
-				Server:  server,
-				Time:    time.Since(startTime),
+				Queries:            msgs,
+				Replies:            replies,
+				Server:             server,
+				Time:               queryPrepTime + dnsTime + decryptTime,
+				QueryCryptoTime:    queryPrepTime,
+				DNSTime:            dnsTime,
+				ResponseCryptoTime: decryptTime,
 			}
 
 			if opts.ResolveIPs {

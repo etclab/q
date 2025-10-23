@@ -283,6 +283,22 @@ func (p Printer) PrintPretty(entries []*Entry) {
 					util.Color(util.ColorMagenta, time.Now().Format("15:04:05 01-02-2006 MST")),
 				)
 
+				// Show crypto breakdown if any crypto was used
+				if entry.QueryCryptoTime > 0 || entry.ResponseCryptoTime > 0 {
+					util.MustWritef(p.Out, "  %s Query prep:  %s\n",
+						util.Color(util.ColorWhite, "├─"),
+						util.Color(util.ColorTeal, entry.QueryCryptoTime.Round(10*time.Microsecond)),
+					)
+					util.MustWritef(p.Out, "  %s DNS network: %s\n",
+						util.Color(util.ColorWhite, "├─"),
+						util.Color(util.ColorTeal, entry.DNSTime.Round(10*time.Microsecond)),
+					)
+					util.MustWritef(p.Out, "  %s Decryption:  %s\n",
+						util.Color(util.ColorWhite, "└─"),
+						util.Color(util.ColorTeal, entry.ResponseCryptoTime.Round(10*time.Microsecond)),
+					)
+				}
+
 				util.MustWritef(p.Out, "Opcode: %s Status: %s ID %s: Flags: %s (%s Q %s A %s N %s E)\n",
 					util.Color(util.ColorMagenta, dns.OpcodeToString[reply.MsgHdr.Opcode]),
 					util.Color(util.ColorTeal, dns.RcodeToString[reply.MsgHdr.Rcode]),

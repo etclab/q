@@ -60,6 +60,13 @@ func (p Printer) PrintRaw(entries []*Entry) {
 				util.MustWritef(p.Out, ";; From %s in %s\n", entry.Server, entry.Time.Round(100*time.Microsecond))
 			}
 
+			// Show crypto breakdown if any crypto was used
+			if entry.QueryCryptoTime > 0 || entry.ResponseCryptoTime > 0 {
+				util.MustWritef(p.Out, ";;   Query prep:  %s\n", entry.QueryCryptoTime.Round(10*time.Microsecond))
+				util.MustWritef(p.Out, ";;   DNS network: %s\n", entry.DNSTime.Round(10*time.Microsecond))
+				util.MustWritef(p.Out, ";;   Decryption:  %s\n", entry.ResponseCryptoTime.Round(10*time.Microsecond))
+			}
+
 			// Print separator if there is more than one query
 			if len(entry.Replies) > 0 && i != len(entry.Replies)-1 {
 				util.MustWritef(p.Out, "\n--\n\n")

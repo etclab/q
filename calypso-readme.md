@@ -112,3 +112,54 @@ make verify-all      # Test all encryption schemes
 make verify-wkdibe   # Test WKD-IBE only
 make verify-calypso  # Test Calypso only
 ```
+
+## Performance Measurement
+
+The tool now provides granular timing breakdowns to measure cryptographic overhead separately from DNS network latency.
+
+### Timing Breakdown
+
+When using encrypted approaches (WKD-IBE or Calypso), the `--stats` flag shows three separate timing metrics:
+
+```bash
+./q A verify.example.com --calypso \
+  --params=verify_calypso_params.bin \
+  --key=verify_calypso_writer.key \
+  --stats \
+  @localhost:1053
+```
+
+**Example output:**
+```
+Stats:
+Received 45 B from localhost:1053 in 4.523ms (15:04:05 01-02-2025 UTC)
+  ├─ Query prep:  1.234ms
+  ├─ DNS network: 2.156ms
+  └─ Decryption:  1.133ms
+```
+
+### Timing Metrics
+
+- **Query prep**: Request-side cryptographic overhead
+  - Calypso: Searchtag generation and key derivation
+  - WKD-IBE: Negligible (no query-side crypto)
+
+- **DNS network**: Pure DNS protocol latency (transport overhead only, no crypto)
+
+- **Response crypto**: Response-side cryptographic overhead
+  - WKD-IBE: HIBE decryption + AES-CTR decryption
+  - Calypso: Message deserialization + HIBE decryption + AES-CTR + BLS signature verification
+
+### Export for Analysis
+
+Use JSON/YAML output formats to export timing data for statistical analysis:
+
+```bash
+./q A verify.example.com --calypso \
+  --params=verify_calypso_params.bin \
+  --key=verify_calypso_writer.key \
+  --format=json \
+  @localhost:1053
+```
+
+The output includes all three timing fields (`QueryCryptoTime`, `DNSTime`, `ResponseCryptoTime`) for programmatic analysis in other tools.

@@ -39,6 +39,11 @@ type Entry struct {
 	// Time is the total time it took to query this server
 	Time time.Duration
 
+	// Granular timing breakdown
+	QueryCryptoTime    time.Duration // Request-side crypto (searchtag generation, key derivation)
+	DNSTime            time.Duration // Pure DNS network latency
+	ResponseCryptoTime time.Duration // Response-side crypto (decryption, signature verification)
+
 	PTRs        map[string]string `json:"-"` // IP -> PTR value
 	existingRRs map[string]bool
 }
