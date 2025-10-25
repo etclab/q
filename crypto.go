@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
-	bls "github.com/cloudflare/circl/ecc/bls12381"
 	"github.com/etclab/calypso"
 	"github.com/etclab/ncircl/hibe/akn07"
 	"github.com/etclab/ncircl/util/aesx"
@@ -181,7 +178,7 @@ func (c *CryptoConfig) DecryptResponse(parsed *ParsedTXTRecord) (string, error) 
 }
 
 // decryptWKDIBE decrypts WKD-IBE-encrypted data and extracts the IP address
-// Binary format: [version|IV_len|IV|AES_ct_len|AES_ct|WKDIBE_ct]
+// Binary format: [IV_len(2)|IV(16)|AES_ct_len(4)|AES_ct(N)|WKDIBE_ct_len(4)|WKDIBE_ct(M)|Sig_len(4)|Sig(S)]
 func (c *CryptoConfig) decryptWKDIBE(ciphertext []byte) (string, error) {
 	if c.WKDIBEPublicParams == nil || c.WKDIBEPrivateKey == nil {
 		return "", fmt.Errorf("WKD-IBE keys not configured (set WKDIBE_PARAMS_FILE and WKDIBE_KEY_FILE)")
@@ -189,21 +186,14 @@ func (c *CryptoConfig) decryptWKDIBE(ciphertext []byte) (string, error) {
 
 	log.Debugf("Decrypting WKD-IBE ciphertext (len=%d)", len(ciphertext))
 
-	// Minimum size check: version(1) + IV_len(2) + IV(16) + AES_ct_len(4) + at least some data
-	if len(ciphertext) < 1+2+16+4+1 {
+	// Minimum size check: IV_len(2) + IV(16) + AES_ct_len(4) + WKDIBE_ct_len(4) + Sig_len(4) + data
+	if len(ciphertext) < 2+16+4+4+4+1 {
 		return "", fmt.Errorf("ciphertext too short (len=%d)", len(ciphertext))
 	}
 
 	offset := 0
 
-	// 1. Parse version
-	version := ciphertext[offset]
-	offset++
-	if version != 1 {
-		return "", fmt.Errorf("unsupported ciphertext version: %d", version)
-	}
-
-	// 2. Parse IV length and IV
+	// 1. Parse IV length and IV
 	ivLen := binary.BigEndian.Uint16(ciphertext[offset:])
 	offset += 2
 	if offset+int(ivLen) > len(ciphertext) {
@@ -213,7 +203,7 @@ func (c *CryptoConfig) decryptWKDIBE(ciphertext []byte) (string, error) {
 	offset += int(ivLen)
 	log.Debugf("WKD-IBE IV length: %d", ivLen)
 
-	// 3. Parse AES ciphertext length and AES ciphertext
+	// 2. Parse AES ciphertext length and AES ciphertext
 	if offset+4 > len(ciphertext) {
 		return "", fmt.Errorf("ciphertext too short for AES length")
 	}
@@ -226,29 +216,63 @@ func (c *CryptoConfig) decryptWKDIBE(ciphertext []byte) (string, error) {
 	offset += int(aesCtLen)
 	log.Debugf("WKD-IBE AES ciphertext length: %d", aesCtLen)
 
-	// 4. Parse WKD-IBE ciphertext
-	hibeCtBytes := ciphertext[offset:]
-	log.Debugf("WKD-IBE ciphertext length: %d", len(hibeCtBytes))
+	// 3. Parse WKDIBE ciphertext with explicit length
+	if offset+4 > len(ciphertext) {
+		return "", fmt.Errorf("ciphertext too short for WKDIBE length")
+	}
+	hibeCtLen := binary.BigEndian.Uint32(ciphertext[offset:])
+	offset += 4
+	if offset+int(hibeCtLen) > len(ciphertext) {
+		return "", fmt.Errorf("invalid WKDIBE ciphertext length: %d", hibeCtLen)
+	}
+	hibeCtBytes := ciphertext[offset : offset+int(hibeCtLen)]
+	offset += int(hibeCtLen)
+	log.Debugf("WKD-IBE ciphertext length: %d", hibeCtLen)
 
+	// 4. Parse signature
+	if offset+4 > len(ciphertext) {
+		return "", fmt.Errorf("ciphertext too short for signature length")
+	}
+	sigLen := binary.BigEndian.Uint32(ciphertext[offset:])
+	offset += 4
+	if offset+int(sigLen) > len(ciphertext) {
+		return "", fmt.Errorf("invalid signature length: %d", sigLen)
+	}
+	sigBytes := ciphertext[offset : offset+int(sigLen)]
+	log.Debugf("WKD-IBE signature length: %d", sigLen)
+
+	sig := &akn07.Signature{}
+	if err := sig.UnmarshalBinary(sigBytes); err != nil {
+		return "", fmt.Errorf("signature deserialization failed: %w", err)
+	}
+
+	// 5. Deserialize and decrypt WKD-IBE ciphertext
 	hibeCt := &akn07.Ciphertext{}
 	if err := hibeCt.UnmarshalBinary(hibeCtBytes); err != nil {
 		return "", fmt.Errorf("WKD-IBE ciphertext deserialization failed: %w", err)
 	}
 
-	// 5. WKD-IBE decrypt to get Gt
+	// 6. WKD-IBE decrypt to get Gt
 	m := akn07.Decrypt(c.WKDIBEPublicParams, c.WKDIBEPrivateKey, hibeCt)
 	log.Debug("WKD-IBE decryption successful, deriving AES key")
 
-	// 6. Derive AES key from Gt
+	// 7. Derive AES key from Gt
 	aesKey := blspairing.KdfGtToAes256(m)
 
-	// 7. AES-CTR decrypt
+	// 8. AES-CTR decrypt
 	plaintext, err := aesx.DecryptCTR(aesKey, iv, aesCt)
 	if err != nil {
 		return "", fmt.Errorf("AES decryption failed: %w", err)
 	}
 
 	log.Debugf("Decrypted plaintext: %s", string(plaintext))
+
+	// 9. Verify signature
+	plaintextHash := blspairing.HashBytesToScalar(plaintext)
+	if !akn07.Verify(c.WKDIBEPublicParams, c.WKDIBEPrivateKey.Pattern, sig, plaintextHash) {
+		return "", fmt.Errorf("signature verification failed")
+	}
+	log.Debug("WKD-IBE signature verification successful")
 
 	// Parse standard JSON format: {"host": "...", "ttl": ...}
 	var record struct {
@@ -279,147 +303,21 @@ func loadCalypsoKeys(paramsPath, keyPath string) (*akn07.PublicParams, *calypso.
 		return nil, nil, fmt.Errorf("deserializing public params: %w", err)
 	}
 
-	// Load Calypso private key (gob encoded)
+	// Load Calypso private key (MarshalBinary format)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading key file: %w", err)
 	}
 
 	key := &calypso.PrivateKey{}
-	buf := bytes.NewBuffer(keyData)
-	decoder := gob.NewDecoder(buf)
-	if err := decoder.Decode(key); err != nil {
+	if err := key.UnmarshalBinary(keyData); err != nil {
 		return nil, nil, fmt.Errorf("deserializing private key: %w", err)
 	}
 
 	return params, key, nil
 }
 
-// DeserializeSignature deserializes bytes to an akn07.Signature
-func DeserializeSignature(data []byte) (*akn07.Signature, error) {
-	if len(data) < 8 {
-		return nil, fmt.Errorf("signature data too short")
-	}
-
-	offset := 0
-	s0Len := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
-	if offset+int(s0Len) > len(data) {
-		return nil, fmt.Errorf("invalid S0 length")
-	}
-
-	s0 := new(bls.G1)
-	if err := s0.SetBytes(data[offset : offset+int(s0Len)]); err != nil {
-		return nil, fmt.Errorf("failed to deserialize S0: %w", err)
-	}
-	offset += int(s0Len)
-
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("signature data too short for S1 length")
-	}
-	s1Len := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
-	if offset+int(s1Len) != len(data) {
-		return nil, fmt.Errorf("invalid S1 length")
-	}
-
-	s1 := new(bls.G2)
-	if err := s1.SetBytes(data[offset : offset+int(s1Len)]); err != nil {
-		return nil, fmt.Errorf("failed to deserialize S1: %w", err)
-	}
-
-	return &akn07.Signature{S0: s0, S1: s1}, nil
-}
-
-// DeserializeMessage deserializes bytes to a Calypso Message
-// Format: [version|SearchTag_len|SearchTag|WrappedKey_len|WrappedKey|IV_len|IV|Ciphertext_len|Ciphertext|Signature_len|Signature]
-func DeserializeMessage(data []byte) (*calypso.Message, error) {
-	if len(data) < 1+2+4+2+4+4 {
-		return nil, fmt.Errorf("message data too short")
-	}
-
-	offset := 0
-
-	// Version
-	version := data[offset]
-	offset++
-	if version != 1 {
-		return nil, fmt.Errorf("unsupported message version: %d", version)
-	}
-
-	// SearchTag
-	searchTagLen := binary.BigEndian.Uint16(data[offset:])
-	offset += 2
-	if offset+int(searchTagLen) > len(data) {
-		return nil, fmt.Errorf("invalid SearchTag length")
-	}
-	searchTag := string(data[offset : offset+int(searchTagLen)])
-	offset += int(searchTagLen)
-
-	// WrappedKey
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("message data too short for WrappedKey length")
-	}
-	wrappedKeyLen := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
-	if offset+int(wrappedKeyLen) > len(data) {
-		return nil, fmt.Errorf("invalid WrappedKey length")
-	}
-	wrappedKey := &akn07.Ciphertext{}
-	if err := wrappedKey.UnmarshalBinary(data[offset : offset+int(wrappedKeyLen)]); err != nil {
-		return nil, fmt.Errorf("failed to deserialize WrappedKey: %w", err)
-	}
-	offset += int(wrappedKeyLen)
-
-	// IV
-	if offset+2 > len(data) {
-		return nil, fmt.Errorf("message data too short for IV length")
-	}
-	ivLen := binary.BigEndian.Uint16(data[offset:])
-	offset += 2
-	if offset+int(ivLen) > len(data) {
-		return nil, fmt.Errorf("invalid IV length")
-	}
-	iv := data[offset : offset+int(ivLen)]
-	offset += int(ivLen)
-
-	// Ciphertext
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("message data too short for Ciphertext length")
-	}
-	ciphertextLen := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
-	if offset+int(ciphertextLen) > len(data) {
-		return nil, fmt.Errorf("invalid Ciphertext length")
-	}
-	ciphertext := data[offset : offset+int(ciphertextLen)]
-	offset += int(ciphertextLen)
-
-	// Signature
-	if offset+4 > len(data) {
-		return nil, fmt.Errorf("message data too short for Signature length")
-	}
-	sigLen := binary.BigEndian.Uint32(data[offset:])
-	offset += 4
-	if offset+int(sigLen) != len(data) {
-		return nil, fmt.Errorf("invalid Signature length")
-	}
-	signature, err := DeserializeSignature(data[offset : offset+int(sigLen)])
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize Signature: %w", err)
-	}
-
-	return &calypso.Message{
-		SearchTag:  searchTag,
-		WrappedKey: wrappedKey,
-		IV:         iv,
-		Ciphertext: ciphertext,
-		Signature:  signature,
-	}, nil
-}
-
 // decryptCalypso decrypts Calypso-encrypted data and extracts the IP address
-// Binary format: [version|SearchTag_len|SearchTag|WrappedKey_len|WrappedKey|IV_len|IV|Ciphertext_len|Ciphertext|Signature_len|Signature]
 func (c *CryptoConfig) decryptCalypso(ciphertext []byte) (string, error) {
 	if c.CalypsoPublicParams == nil || c.CalypsoPrivateKey == nil {
 		return "", fmt.Errorf("Calypso keys not configured (set CALYPSO_PARAMS_FILE and CALYPSO_KEY_FILE)")
@@ -427,9 +325,9 @@ func (c *CryptoConfig) decryptCalypso(ciphertext []byte) (string, error) {
 
 	log.Debugf("Decrypting Calypso ciphertext (len=%d)", len(ciphertext))
 
-	// Deserialize bytes to Message
-	message, err := DeserializeMessage(ciphertext)
-	if err != nil {
+	// Deserialize bytes to Message using upstream UnmarshalBinary
+	message := &calypso.Message{}
+	if err := message.UnmarshalBinary(ciphertext); err != nil {
 		return "", fmt.Errorf("message deserialization failed: %w", err)
 	}
 

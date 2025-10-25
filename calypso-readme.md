@@ -53,26 +53,40 @@ The tool supports decrypting DNS records encrypted with WKD-IBE or Calypso. The 
 
 ### WKD-IBE Decryption
 
-WKD-IBE (Wildcard Key-Derived Identity-Based Encryption) allows identity-based decryption using hierarchical domain patterns.
+WKD-IBE (Wildcard Key-Derived Identity-Based Encryption) provides hierarchical identity-based encryption using domain patterns with mandatory signature enforcement.
 
 **Setup and query:**
 ```bash
-# Generate WKD-IBE parameters and identity key
+# Generate WKD-IBE parameters and identity key (from etcd-client directory)
+cd /path/to/etcd-client
 make setup-wkdibe
 
 # Query A record with automatic decryption
-./q A verify.example.com --wkdibe \
-  --params=verify_wkdibe_params.bin \
-  --key=verify_wkdibe_identity.key \
-  @localhost:1053
+cd /path/to/q
+./q A verify.example.com @localhost:1053 --wkdibe \
+  --params=/path/to/etcd-client/verify_wkdibe_params.bin \
+  --key=/path/to/etcd-client/verify_wkdibe_identity.key 
+  
 
 # The tool automatically queries TXT and decrypts to A record
 ```
 
+**IMPORTANT**: The `--params` file must match the parameters used to generate the key. Keys generated with different public parameters are incompatible.
+
 **Technical Details:**
 - Uses EDNS0 option code 65002
-- Encrypted payload format: binary (IV + AES ciphertext + IBE ciphertext)
+- Based on AKN07 HIBE scheme on BLS12-381 curve
+- **Hybrid encryption**: HIBE (key encapsulation) + AES-256-CTR (data encryption) + BLS signature (authentication)
+- **Pattern-based access**: Domains converted to reversed patterns (e.g., `alice.example.com` → `["com", "example", "alice", "", ""]`)
+- **Hierarchical key derivation**: Parent keys can derive child keys but cannot decrypt child ciphertexts
+- **Mandatory signatures**: Every ciphertext includes a pattern-specific signature preventing:
+  - Cross-pattern decryption (parent keys cannot decrypt child-specific messages)
+  - Tampering detection (modifications fail signature verification)
+  - Unauthorized key usage (wrong key fails verification, not garbage decryption)
+- **Wildcard support**: Empty pattern slots represent wildcards for pattern matching
+- Ciphertext structure: `[IV_len(2)|IV(16)|AES_ct_len(4)|AES_ct|HIBE_ct_len(4)|HIBE_ct|Sig_len(4)|Sig]`
 - TXT record format: `02:<base64-encoded-payload>`
+- Storage path: Standard domain-based etcd path `/skydns/com/example/alice`
 
 ### Calypso Decryption
 
@@ -84,10 +98,10 @@ Calypso provides searchable encryption with writer/reader key separation.
 make setup-calypso
 
 # Query A record with automatic decryption
-./q A verify.example.com --calypso \
+./q A verify.example.com @localhost:1053 --calypso \
   --params=verify_calypso_params.bin \
-  --key=verify_calypso_writer.key \
-  @localhost:1053
+  --key=verify_calypso_writer.key 
+  
 
 # The tool automatically:
 # 1. Derives the searchtag from the domain name and key
@@ -101,7 +115,7 @@ make setup-calypso
   - If querying the exact domain the key is for → uses key's pre-computed searchtag
   - If querying a subdomain matching the key's pattern → derives new searchtag for that specific domain
 - Searchtag sent as EDNS0 payload (auto-generated, not user-provided)
-- Encrypted payload format: binary (IV + AES ciphertext + Calypso ciphertext)
+- Message structure: SearchTag + WrappedKey (HIBE ciphertext) + IV + Ciphertext (AES-CTR) + Signature (BLS)
 - TXT record format: `03:<base64-encoded-payload>`
 
 ### Verification
@@ -122,11 +136,11 @@ The tool now provides granular timing breakdowns to measure cryptographic overhe
 When using encrypted approaches (WKD-IBE or Calypso), the `--stats` flag shows three separate timing metrics:
 
 ```bash
-./q A verify.example.com --calypso \
+./q A verify.example.com @localhost:1053 --calypso \
   --params=verify_calypso_params.bin \
   --key=verify_calypso_writer.key \
-  --stats \
-  @localhost:1053
+  --stats 
+  
 ```
 
 **Example output:**
@@ -147,19 +161,18 @@ Received 45 B from localhost:1053 in 4.523ms (15:04:05 01-02-2025 UTC)
 - **DNS network**: Pure DNS protocol latency (transport overhead only, no crypto)
 
 - **Response crypto**: Response-side cryptographic overhead
-  - WKD-IBE: HIBE decryption + AES-CTR decryption
-  - Calypso: Message deserialization + HIBE decryption + AES-CTR + BLS signature verification
+  - WKD-IBE: Deserialization + HIBE decryption + AES-CTR decryption + BLS signature verification
+  - Calypso: Deserialization + HIBE decryption + AES-CTR decryption + BLS signature verification
 
 ### Export for Analysis
 
 Use JSON/YAML output formats to export timing data for statistical analysis:
 
 ```bash
-./q A verify.example.com --calypso \
+./q A verify.example.com @localhost:1053 --calypso \
   --params=verify_calypso_params.bin \
   --key=verify_calypso_writer.key \
-  --format=json \
-  @localhost:1053
+  --format=json 
 ```
 
 The output includes all three timing fields (`QueryCryptoTime`, `DNSTime`, `ResponseCryptoTime`) for programmatic analysis in other tools.
