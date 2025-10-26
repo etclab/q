@@ -279,7 +279,7 @@ func (p Printer) PrintPretty(entries []*Entry) {
 				util.MustWritef(p.Out, "Received %s from %s in %s (%s)\n",
 					util.Color(util.ColorPurple, fmt.Sprintf("%d B", reply.Len())),
 					util.Color(util.ColorGreen, entry.Server),
-					util.Color(util.ColorTeal, entry.Time.Round(100*time.Microsecond)),
+					util.Color(util.ColorTeal, fmt.Sprintf("%dns", entry.Time.Nanoseconds())),
 					util.Color(util.ColorMagenta, time.Now().Format("15:04:05 01-02-2006 MST")),
 				)
 
@@ -287,15 +287,15 @@ func (p Printer) PrintPretty(entries []*Entry) {
 				if entry.QueryCryptoTime > 0 || entry.ResponseCryptoTime > 0 {
 					util.MustWritef(p.Out, "  %s Query prep:  %s\n",
 						util.Color(util.ColorWhite, "├─"),
-						util.Color(util.ColorTeal, entry.QueryCryptoTime.Round(10*time.Microsecond)),
+						util.Color(util.ColorTeal, fmt.Sprintf("%dns", entry.QueryCryptoTime.Nanoseconds())),
 					)
 					util.MustWritef(p.Out, "  %s DNS network: %s\n",
 						util.Color(util.ColorWhite, "├─"),
-						util.Color(util.ColorTeal, entry.DNSTime.Round(10*time.Microsecond)),
+						util.Color(util.ColorTeal, fmt.Sprintf("%dns", entry.DNSTime.Nanoseconds())),
 					)
 					util.MustWritef(p.Out, "  %s Decryption:  %s\n",
 						util.Color(util.ColorWhite, "└─"),
-						util.Color(util.ColorTeal, entry.ResponseCryptoTime.Round(10*time.Microsecond)),
+						util.Color(util.ColorTeal, fmt.Sprintf("%dns", entry.ResponseCryptoTime.Nanoseconds())),
 					)
 				}
 

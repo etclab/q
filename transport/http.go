@@ -58,6 +58,8 @@ func (h *HTTP) Exchange(m *dns.Msg) (*dns.Msg, error) {
 		return nil, fmt.Errorf("packing message: %w", err)
 	}
 
+	dnsRequestSize := len(buf)
+
 	var queryURL string
 	var req *http.Request
 	switch h.Method {
@@ -110,6 +112,19 @@ func (h *HTTP) Exchange(m *dns.Msg) (*dns.Msg, error) {
 		return nil, fmt.Errorf("got status code %d from %s", resp.StatusCode, queryURL)
 	}
 
+	dnsResponseSize := len(body)
+
+	// Log packet sizes if measurement is enabled
+	if h.MeasureSizes {
+		// Estimate HTTP request size
+		httpRequestSize := estimateHTTPRequestSize(req, h.Method, dnsRequestSize)
+		// Estimate HTTP response size
+		httpResponseSize := estimateHTTPResponseSize(resp, dnsResponseSize)
+
+		log.Infof("[SIZE] dns_req=%d dns_resp=%d http_req=%d http_resp=%d",
+			dnsRequestSize, dnsResponseSize, httpRequestSize, httpResponseSize)
+	}
+
 	response := dns.Msg{}
 	if err := response.Unpack(body); err != nil {
 		return nil, fmt.Errorf("unpacking DNS response from %s: %w", queryURL, err)
@@ -121,4 +136,53 @@ func (h *HTTP) Exchange(m *dns.Msg) (*dns.Msg, error) {
 func (h *HTTP) Close() error {
 	h.conn.CloseIdleConnections()
 	return nil
+}
+
+// estimateHTTPRequestSize estimates the total HTTP request size including headers
+func estimateHTTPRequestSize(req *http.Request, method string, bodySize int) int {
+	// Start with request line: "METHOD /path HTTP/1.1\r\n"
+	requestLine := fmt.Sprintf("%s %s HTTP/1.1\r\n", req.Method, req.URL.RequestURI())
+	size := len(requestLine)
+
+	// Add Host header
+	size += len(fmt.Sprintf("Host: %s\r\n", req.Host))
+
+	// Add all headers
+	for name, values := range req.Header {
+		for _, value := range values {
+			size += len(fmt.Sprintf("%s: %s\r\n", name, value))
+		}
+	}
+
+	// Add blank line separating headers from body
+	size += 2 // \r\n
+
+	// Add body size (for POST)
+	if method == http.MethodPost {
+		size += bodySize
+	}
+
+	return size
+}
+
+// estimateHTTPResponseSize estimates the total HTTP response size including headers
+func estimateHTTPResponseSize(resp *http.Response, bodySize int) int {
+	// Start with status line: "HTTP/1.1 200 OK\r\n"
+	statusLine := fmt.Sprintf("HTTP/1.1 %s\r\n", resp.Status)
+	size := len(statusLine)
+
+	// Add all headers
+	for name, values := range resp.Header {
+		for _, value := range values {
+			size += len(fmt.Sprintf("%s: %s\r\n", name, value))
+		}
+	}
+
+	// Add blank line separating headers from body
+	size += 2 // \r\n
+
+	// Add body size
+	size += bodySize
+
+	return size
 }

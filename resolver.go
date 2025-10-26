@@ -161,8 +161,9 @@ func newTransport(server string, transportType transport.Type, tlsConfig *tls.Co
 	var ts transport.Transport
 
 	common := transport.Common{
-		Server:    server,
-		ReuseConn: opts.ReuseConn,
+		Server:       server,
+		ReuseConn:    opts.ReuseConn,
+		MeasureSizes: opts.MeasureSizes,
 	}
 
 	switch transportType {

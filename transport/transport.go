@@ -10,8 +10,9 @@ type Transport interface {
 }
 
 type Common struct {
-	Server    string
-	ReuseConn bool
+	Server       string
+	ReuseConn    bool
+	MeasureSizes bool
 }
 
 type Type string

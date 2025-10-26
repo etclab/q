@@ -101,10 +101,11 @@ type Flags struct {
 
 	DefaultRRTypes []string `long:"default-rr-types" description:"Default record types" default:"A" default:"AAAA" default:"NS" default:"MX" default:"TXT" default:"CNAME"` //nolint:golint,staticcheck
 
-	UDPBuffer   uint16 `long:"udp-buffer" description:"Set EDNS0 UDP size in query" default:"1232"`
-	Verbose     bool   `short:"v" long:"verbose" description:"Show verbose log messages"`
-	Trace       bool   `long:"trace" description:"Show trace log messages"`
-	ShowVersion bool   `short:"V" long:"version" description:"Show version and exit"`
+	UDPBuffer    uint16 `long:"udp-buffer" description:"Set EDNS0 UDP size in query" default:"1232"`
+	Verbose      bool   `short:"v" long:"verbose" description:"Show verbose log messages"`
+	Trace        bool   `long:"trace" description:"Show trace log messages"`
+	ShowVersion  bool   `short:"V" long:"version" description:"Show version and exit"`
+	MeasureSizes bool   `long:"measure-sizes" description:"Log packet sizes for measurement"`
 }
 
 // ParsePlusFlags parses a list of flags notated by +[no]flag and sets the corresponding opts fields
