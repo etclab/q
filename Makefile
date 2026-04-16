@@ -27,7 +27,7 @@ setup-wkdibe:
 	@which etcd-client >/dev/null || (echo "Error: etcd-client not found in PATH" && exit 1)
 	etcd-client wkdibe setup --max-depth 5 --output verify_wkdibe_params.bin --master-key verify_wkdibe_master.key
 	etcd-client wkdibe keygen --params verify_wkdibe_params.bin --master-key verify_wkdibe_master.key \
-		--pattern "com,example,verify" --output verify_wkdibe_identity.key
+		--domain "verify.example.com" --output verify_wkdibe_identity.key
 	@echo "WKD-IBE setup complete"
 
 setup-calypso:
