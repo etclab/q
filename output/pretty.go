@@ -279,7 +279,7 @@ func (p Printer) PrintPretty(entries []*Entry) {
 				util.MustWritef(p.Out, "Received %s from %s in %s (%s)\n",
 					util.Color(util.ColorPurple, fmt.Sprintf("%d B", reply.Len())),
 					util.Color(util.ColorGreen, entry.Server),
-					util.Color(util.ColorTeal, fmt.Sprintf("%dns", entry.Time.Nanoseconds())),
+					util.Color(util.ColorTeal, entry.Time.Round(100*time.Microsecond).String()),
 					util.Color(util.ColorMagenta, time.Now().Format("15:04:05 01-02-2006 MST")),
 				)
 
